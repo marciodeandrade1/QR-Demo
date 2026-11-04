@@ -85,7 +85,7 @@ public sealed class SmartCardReader : IDisposable
         _leitorAtual = leitor;
         _handleCartao = IntPtr.Zero;
         _ultimoUid = null;
-        StatusAlterado?.Invoke($"Aguardando cartão em: {leitor}");
+        StatusAlterado?.Invoke("Aguardando cartão...");
     }
 
     public void Desconectar()

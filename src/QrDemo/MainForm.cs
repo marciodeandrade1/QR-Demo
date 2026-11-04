@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace QrDemo;
 
@@ -19,6 +20,9 @@ public sealed class MainForm : Form
         DropDownStyle = ComboBoxStyle.DropDownList,
         Width = 300,
     };
+
+    /// <summary>Nome exibido no combo (traduzido) → nome bruto do PC/SC.</summary>
+    private readonly Dictionary<string, string> _leitorPorExibicao = new();
     private readonly Button _btnRecarregarLeitores = new() { Text = "Recarregar" };
     private readonly Button _btnConectar = new() { Text = "Conectar", Enabled = false };
     private readonly Label _lblStatusLeitor = new()
@@ -295,9 +299,18 @@ public sealed class MainForm : Form
         {
             var leitores = _leitor.ListarLeitores();
             _comboLeitores.Items.Clear();
+            _leitorPorExibicao.Clear();
+            var usados = new HashSet<string>();
             foreach (var nomeLeitor in leitores)
             {
-                _comboLeitores.Items.Add(nomeLeitor);
+                var exibicao = NomeAmigavel(nomeLeitor);
+                // nomes repetidos: acrescenta o nome bruto para diferenciar
+                if (!usados.Add(exibicao))
+                {
+                    exibicao = $"{exibicao} [{nomeLeitor}]";
+                }
+                _leitorPorExibicao[exibicao] = nomeLeitor;
+                _comboLeitores.Items.Add(exibicao);
             }
             if (leitores.Count > 0)
             {
@@ -319,16 +332,64 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// Traduz o nome técnico do leitor PC/SC (ex.: "ACS ACR122U PICC Interface 0")
+    /// para uma apresentação em português no combo e nos avisos
+    /// ("Leitor ACR122U - cartão sem contato (PICC) - nº 0").
+    /// Nomes desconhecidos são mantidos como estão.
+    /// </summary>
+    private static string NomeAmigavel(string nomePcsc)
+    {
+        var correspondencia = Regex.Match(nomePcsc, @"(\d+)\s*$");
+        var numero = correspondencia.Success
+            ? correspondencia.Groups[1].Value
+            : null;
+        var nucleo = correspondencia.Success
+            ? nomePcsc[..correspondencia.Index].Trim()
+            : nomePcsc.Trim();
+
+        var partes = new List<string>();
+        if (nucleo.Contains("ACR122U", StringComparison.OrdinalIgnoreCase))
+        {
+            partes.Add("Leitor ACR122U");
+        }
+        else if (nucleo.Contains("ACR122", StringComparison.OrdinalIgnoreCase))
+        {
+            partes.Add("Leitor ACR122");
+        }
+        else
+        {
+            return nomePcsc; // hardware não identificado: exibe o bruto
+        }
+
+        if (nucleo.Contains("PICC", StringComparison.OrdinalIgnoreCase))
+        {
+            partes.Add("cartão sem contato (PICC)");
+        }
+        else if (nucleo.Contains("SAM", StringComparison.OrdinalIgnoreCase))
+        {
+            partes.Add("módulo de segurança (SAM)");
+        }
+
+        if (numero is not null)
+        {
+            partes.Add($"nº {numero}");
+        }
+        return string.Join(" - ", partes);
+    }
+
     private void AoClicarConectar(object? sender, EventArgs e)
     {
-        var leitor = _comboLeitores.SelectedItem as string;
-        if (string.IsNullOrEmpty(leitor))
+        var exibicao = _comboLeitores.SelectedItem as string;
+        if (string.IsNullOrEmpty(exibicao)
+            || !_leitorPorExibicao.TryGetValue(exibicao, out var leitor))
         {
             return;
         }
         try
         {
             _leitor.Conectar(leitor);
+            _lblStatusLeitor.Text = $"Aguardando cartão em: {exibicao}";
             _timer.Start();
         }
         catch (Exception ex)
