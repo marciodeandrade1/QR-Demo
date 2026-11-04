@@ -1,0 +1,16 @@
+# Artefatos de build
+bin/
+obj/
+out/
+artifacts/
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# Configuração local (credenciais)
+config.json

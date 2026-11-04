@@ -1,0 +1,78 @@
+# QR-Demo
+
+Demonstração em **C# (Windows Forms)** para leitura de cartões RFID com o leitor
+**ACR122U** (Advanced Card Systems Ltd.), cadastro de códigos em um banco de
+dados MySQL (**DbCodigos**) e geração de um **PDF** com as leituras impressas em
+**QR Code** — por exemplo, os códigos `BR-1001` a `BR-1005`.
+
+## Funcionalidades
+
+- Detecção do leitor PC/SC conectado — usa a `winscard.dll` nativa do Windows,
+  sem dependências externas para o hardware.
+- Leitura contínua (polling) do UID do cartão MIFARE via APDU `FF CA 00 00 00`.
+- Cadastro de códigos no banco `DbCodigos`, associando código, UID, descrição e
+  data da leitura.
+- Lote de demonstração: gera e cadastra a faixa informada (ex.: `BR-1001` a
+  `BR-1005`) e imprime cada código como **QR Code** em um arquivo PDF.
+- O banco `DbCodigos` e a tabela `codigos` são criados automaticamente no
+  primeiro acesso.
+
+## Pré-requisitos
+
+- Windows com o SDK do .NET (`dotnet`) instalado.
+- Leitor **ACR122U** da Advanced Card Systems Ltd. com o driver PC/SC instalado.
+- Servidor MySQL acessível (padrão: `localhost:3306`, usuário `root`).
+
+## Como executar
+
+```powershell
+dotnet run --project src\QrDemo
+```
+
+1. Na área **Leitor RFID**, selecione o leitor detectado e clique em
+   **Conectar**.
+2. Aproxime o cartão — o UID aparece automaticamente.
+3. Em **Cadastro**, informe o código (ex.: `BR-1001`), a descrição e clique em
+   **Cadastrar**; o código é gravado no banco `DbCodigos` junto do UID.
+4. Selecione uma linha da lista e clique em **Vincular UID** para associar o
+   último cartão lido a um código já cadastrado.
+5. Em **Lote de códigos**, confirme o prefixo (`BR-`) e a faixa (`1001` a
+   `1005`) e clique em **Gerar códigos e PDF (QR Code)**:
+   os códigos são gravados no banco e o PDF com os QR Codes é aberto.
+
+## Configuração do banco
+
+A connectionString é montada a partir do arquivo `config.json` criado ao lado do
+executável:
+
+```json
+{
+  "Servidor": "localhost",
+  "Porta": 3306,
+  "Usuario": "root",
+  "Senha": ""
+}
+```
+
+No primeiro uso o aplicativo recalcula e grava esse arquivo com os valores
+padrão acima. Em ambiente de demonstração os padrões locais do README valem
+(`localhost`, `root`, sem senha).
+
+## Estrutura
+
+| Caminho                                | Conteúdo                                        |
+| -------------------------------------- | ----------------------------------------------- |
+| `src/QrDemo/MainForm.cs`               | Interface principal (WinForms)                  |
+| `src/QrDemo/Services/SmartCardReader.cs` | Acesso PC/SC nativo ao leitor ACR122U          |
+| `src/QrDemo/Services/CodigoRepository.cs` | Operações MySQL (DbCodigos)                  |
+| `src/QrDemo/Services/QrPdfGenerator.cs`  | Geração do PDF com QR Codes (QRCoder + PdfSharp) |
+| `src/QrDemo/Services/Config.cs`          | Leitura/gravação do `config.json`              |
+
+## Observações
+
+- Todos os arquivos de código, script e documentação deste repositório são
+  **UTF-8** (sem BOM) — includive os textos de interface em português. Ao
+  editar via script, não use `Get-Content`/`Set-Content` do Windows PowerShell
+  5.1 (que regravam UTF-8 como CP1252); prefira as ferramentas de edição ou o
+  acesso explícito pelo .NET.
+- `config.json` contém as credenciais localmente e não deve ser versionado.
