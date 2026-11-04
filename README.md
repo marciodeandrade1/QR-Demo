@@ -29,6 +29,15 @@ dados MySQL (**DbCodigos**) e geração de um **PDF** com as leituras impressas 
 dotnet run --project src\QrDemo
 ```
 
+Sem o leitor/banco, é possível validar a impressão dos QR Codes com:
+
+```powershell
+dotnet run --project src\QrDemo -- --teste-pdf
+```
+
+O arquivo gerado fica em `%USERPROFILE%\Documents\QrDemo\QrDemo-teste-pdf.pdf`,
+com os códigos de exemplo `BR-1001` a `BR-1005`.
+
 1. Na área **Leitor RFID**, selecione o leitor detectado e clique em
    **Conectar**.
 2. Aproxime o cartão — o UID aparece automaticamente.
@@ -38,7 +47,8 @@ dotnet run --project src\QrDemo
    último cartão lido a um código já cadastrado.
 5. Em **Lote de códigos**, confirme o prefixo (`BR-`) e a faixa (`1001` a
    `1005`) e clique em **Gerar códigos e PDF (QR Code)**:
-   os códigos são gravados no banco e o PDF com os QR Codes é aberto.
+   os códigos são gravados no banco e o PDF com os QR Codes é aberto
+   (salvo em `%USERPROFILE%\Documents\QrDemo\`).
 
 ## Configuração do banco
 
@@ -65,8 +75,9 @@ padrão acima. Em ambiente de demonstração os padrões locais do README valem
 | `src/QrDemo/MainForm.cs`               | Interface principal (WinForms)                  |
 | `src/QrDemo/Services/SmartCardReader.cs` | Acesso PC/SC nativo ao leitor ACR122U          |
 | `src/QrDemo/Services/CodigoRepository.cs` | Operações MySQL (DbCodigos)                  |
-| `src/QrDemo/Services/QrPdfGenerator.cs`  | Geração do PDF com QR Codes (QRCoder + PdfSharp) |
+| `src/QrDemo/Services/QrPdfGenerator.cs`  | PDF com QR Codes vetoriais (QRCoder + PdfSharp) |
 | `src/QrDemo/Services/Config.cs`          | Leitura/gravação do `config.json`              |
+| `Script/`                              | SQL de criação do banco, tabela e carga demo    |
 
 ## Observações
 
