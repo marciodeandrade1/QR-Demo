@@ -88,6 +88,13 @@ public static class QrPdfGenerator
             pagina.Gfx.DrawString(
                 $"Leitura: {codigo.DataLeitura:dd/MM/yyyy HH:mm:ss}", fonteCampo,
                 XBrushes.Gray, xTexto, y + 66);
+            if (codigo.TipoCartao is not null && codigo.DataGravacao is not null)
+            {
+                pagina.Gfx.DrawString(
+                    $"Gravação RFID: {codigo.TipoCartao} em "
+                    + $"{codigo.DataGravacao:dd/MM/yyyy HH:mm:ss}", fonteCampo,
+                    XBrushes.Gray, xTexto, y + 82);
+            }
 
             pagina.Gfx.DrawLine(XPens.LightGray,
                 Margem, y + AlturaBloco - 18, LarguraPagina - Margem, y + AlturaBloco - 18);

@@ -60,6 +60,14 @@ public sealed class MainForm : Form
     private readonly Button _btnExcluir = new() { Text = "Excluir selecionado" };
     private readonly Button _btnVincularUid = new() { Text = "Vincular UID" };
     private readonly TextBox _txtPrefixo = new() { Text = "BR-", Width = 70, MaxLength = 20 };
+    private readonly Button _btnGravarCartao = new()
+    {
+        Text = "Gravar código no cartão",
+    };
+    private readonly Button _btnLerGravacao = new()
+    {
+        Text = "Ler gravação do cartão",
+    };
     private readonly NumericUpDown _numInicio = new()
     {
         Minimum = 0,
@@ -122,6 +130,8 @@ public sealed class MainForm : Form
         _btnVincularUid.Click += AoClicarVincularUid;
         _btnGerarLote.Click += AoClicarGerarLote;
         _btnConfig.Click += AoClicarConfig;
+        _btnGravarCartao.Click += AoClicarGravarCartao;
+        _btnLerGravacao.Click += AoClicarLerGravacao;
 
         _timer.Tick += (_, _) => Seguro(_leitor.VerificarCartao);
 
@@ -192,10 +202,10 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             AutoSize = true,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
             Padding = new Padding(6),
         };
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 4; i++)
         {
             fluxoCadastro.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         }
@@ -234,9 +244,22 @@ public sealed class MainForm : Form
             _lblBanco,
         });
 
+        var linhaGravacao = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false };
+        linhaGravacao.Controls.AddRange(new Control[]
+        {
+            new Label
+            {
+                Text = "Gravação RFID:",
+                AutoSize = true,
+            },
+            _btnGravarCartao,
+            _btnLerGravacao,
+        });
+
         fluxoCadastro.Controls.Add(linha1, 0, 0);
         fluxoCadastro.Controls.Add(linha2, 0, 1);
         fluxoCadastro.Controls.Add(linha3, 0, 2);
+        fluxoCadastro.Controls.Add(linhaGravacao, 0, 3);
         grupoCadastro.Controls.Add(fluxoCadastro);
         raiz.Controls.Add(grupoCadastro, 0, 1);
 
@@ -274,6 +297,21 @@ public sealed class MainForm : Form
             Name = "dataLeitura",
             DataPropertyName = nameof(Codigo.DataLeitura),
             HeaderText = "Data da leitura",
+            FillWeight = 20,
+            DefaultCellStyle = new DataGridViewCellStyle { Format = "g" },
+        });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "tipoCartao",
+            DataPropertyName = nameof(Codigo.TipoCartao),
+            HeaderText = "Gravação (tipo)",
+            FillWeight = 12,
+        });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "dataGravacao",
+            DataPropertyName = nameof(Codigo.DataGravacao),
+            HeaderText = "Gravação em",
             FillWeight = 20,
             DefaultCellStyle = new DataGridViewCellStyle { Format = "g" },
         });
@@ -606,6 +644,132 @@ public sealed class MainForm : Form
         _ = IniciarBancoAsync();
         _lblBanco.Text = "Banco DbCodigos: reconectando...";
     }
+
+    // ---------- gravação RFID ----------
+
+    private async void AoClicarGravarCartao(object? sender, EventArgs e)
+    {
+        var repositorio = RepositorioObrigatorio();
+        if (repositorio is null || _grid.SelectedRows.Count == 0)
+        {
+            return;
+        }
+        var codigo = _grid.SelectedRows[0].DataBoundItem as Codigo;
+        if (codigo is null)
+        {
+            return;
+        }
+        if (_leitor.UltimoUid is null)
+        {
+            MessageBox.Show(this,
+                "Aproxime o cartão no leitor antes de gravar.",
+                "Gravação RFID", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var resposta = MessageBox.Show(this,
+            $"Gravar '{codigo.Valor}' na memória do cartão?\n\n"
+            + "O conteúdo anterior do bloco 4 (MIFARE Classic) ou das páginas 4-7 "
+            + "(Ultralight/NTAG) será substituído.",
+            "Gravação RFID", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2);
+        if (resposta != DialogResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            UseWaitCursor = true;
+            var resultado = _leitor.GravarCartao(codigo.Valor);
+            await repositorio.MarcarGravacaoAsync(
+                codigo.Id, NomeTipoCartao(resultado.Tipo));
+
+            var conferido = string.Equals(
+                resultado.TextoReleido, codigo.Valor, StringComparison.Ordinal);
+            _lblBanco.Text = conferido
+                ? $"'{codigo.Valor}' gravado e conferido no cartão "
+                    + $"{NomeTipoCartao(resultado.Tipo)} (leitura: '{resultado.TextoReleido}')."
+                : $"'{codigo.Valor}' gravado, mas a releitura devolveu "
+                    + $"'{resultado.TextoReleido}' - confira o cartão.";
+
+            if (!conferido)
+            {
+                MessageBox.Show(this,
+                    "A gravação foi aceita pelo cartão, porém a releitura não "
+                    + $"coincide com '{codigo.Valor}' (devolveu "
+                    + $"'{resultado.TextoReleido}').",
+                    "Gravação RFID", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            await AtualizarListaAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Erro na gravação RFID",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            UseWaitCursor = false;
+        }
+    }
+
+    private async void AoClicarLerGravacao(object? sender, EventArgs e)
+    {
+        var repositorio = RepositorioObrigatorio();
+        if (repositorio is null)
+        {
+            return;
+        }
+        if (_leitor.UltimoUid is null)
+        {
+            MessageBox.Show(this,
+                "Aproxime um cartão no leitor antes de ler a gravação.",
+                "Gravação RFID", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        try
+        {
+            UseWaitCursor = true;
+            var texto = _leitor.LerDadosGravados(out var tipoCartao);
+            _lblBanco.Text = $"Cartão contém '{texto}' "
+                + $"({NomeTipoCartao(tipoCartao)}).";
+
+            // Seleciona o código correspondente na lista, quando existir
+            foreach (DataGridViewRow linha in _grid.Rows)
+            {
+                if (string.Equals(
+                       linha.Cells["valor"].Value as string, texto,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    _grid.ClearSelection();
+                    linha.Selected = true;
+                    _grid.FirstDisplayedScrollingRowIndex = linha.Index;
+                    break;
+                }
+            }
+
+            await AtualizarListaAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Leitura da gravação RFID",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            UseWaitCursor = false;
+        }
+    }
+
+    private static string NomeTipoCartao(SmartCardReader.TipoCartaoEstimado tipo) =>
+        tipo switch
+        {
+            SmartCardReader.TipoCartaoEstimado.Classic => "MIFARE Classic",
+            SmartCardReader.TipoCartaoEstimado.Ultralight => "MIFARE Ultralight/NTAG",
+            _ => "tipo desconhecido",
+        };
 
     // ---------- banco ----------
 

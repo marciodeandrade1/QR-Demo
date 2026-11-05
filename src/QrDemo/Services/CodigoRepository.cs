@@ -8,7 +8,9 @@ public sealed record Codigo(
     string Valor,
     string? Uid,
     string? Descricao,
-    DateTime DataLeitura);
+    DateTime DataLeitura,
+    string? TipoCartao = null,
+    DateTime? DataGravacao = null);
 
 /// <summary>
 /// Operações MySQL no banco DbCodigos (tabela codigos) para a demonstração.
@@ -57,6 +59,8 @@ public sealed class CodigoRepository
                 `uid`           VARCHAR(32)  NULL     COMMENT 'UID do cartão RFID (ACR122U), hexadecimal',
                 `descricao`     VARCHAR(200) NULL     COMMENT 'Descrição livre da associação',
                 `data_leitura`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `tipo_cartao`   VARCHAR(20)  NULL     COMMENT 'Tipo do cartão gravado (Classic / Ultralight)',
+                `data_gravacao` DATETIME     NULL     COMMENT 'Data da gravação do código no cartão',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uq_codigos_codigo` (`codigo`),
                 KEY `ix_codigos_uid` (`uid`)
@@ -68,6 +72,47 @@ public sealed class CodigoRepository
         {
             cmdTabela.CommandText = sqlTabela;
             await cmdTabela.ExecuteNonQueryAsync(cancelamento);
+        }
+
+        // Bancos criados por versões anteriores: acrescenta as colunas de
+        // gravação RFID quando ainda não existirem (MySQL não tem
+        // ADD COLUMN IF NOT EXISTS).
+        const string sqlColunas =
+            """
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = 'DbCodigos' AND TABLE_NAME = 'codigos'
+            """;
+        var existentes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var cmdColunas = conexao.CreateCommand())
+        {
+            cmdColunas.CommandText = sqlColunas;
+            await using var leitor = await cmdColunas.ExecuteReaderAsync(cancelamento);
+            while (await leitor.ReadAsync(cancelamento))
+            {
+                existentes.Add(leitor.GetString(0));
+            }
+        }
+
+        if (!existentes.Contains("tipo_cartao") || !existentes.Contains("data_gravacao"))
+        {
+            var alteracoes = new List<string>();
+            if (!existentes.Contains("tipo_cartao"))
+            {
+                alteracoes.Add(
+                    "ADD COLUMN `tipo_cartao`   VARCHAR(20) NULL "
+                    + "COMMENT 'Tipo do cartão gravado (Classic / Ultralight)'");
+            }
+            if (!existentes.Contains("data_gravacao"))
+            {
+                alteracoes.Add(
+                    "ADD COLUMN `data_gravacao` DATETIME    NULL "
+                    + "COMMENT 'Data da gravação do codigo no cartão'");
+            }
+            await using var cmdAlterar = conexao.CreateCommand();
+            cmdAlterar.CommandText =
+                "ALTER TABLE `DbCodigos`.`codigos` " + string.Join(", ", alteracoes);
+            await cmdAlterar.ExecuteNonQueryAsync(cancelamento);
         }
     }
 
@@ -112,7 +157,8 @@ public sealed class CodigoRepository
 
         const string sql =
             """
-            SELECT `id`, `codigo`, `uid`, `descricao`, `data_leitura`
+            SELECT `id`, `codigo`, `uid`, `descricao`, `data_leitura`,
+                   `tipo_cartao`, `data_gravacao`
             FROM `codigos`
             ORDER BY `codigo`
             """;
@@ -125,6 +171,8 @@ public sealed class CodigoRepository
         var ordemUid = leitor.GetOrdinal("uid");
         var ordemDescricao = leitor.GetOrdinal("descricao");
         var ordemData = leitor.GetOrdinal("data_leitura");
+        var ordemTipo = leitor.GetOrdinal("tipo_cartao");
+        var ordemGravacao = leitor.GetOrdinal("data_gravacao");
         while (await leitor.ReadAsync(cancelamento))
         {
             lista.Add(new Codigo(
@@ -132,13 +180,17 @@ public sealed class CodigoRepository
                 Valor: leitor.GetString(ordemCodigo),
                 Uid: leitor.IsDBNull(ordemUid) ? null : leitor.GetString(ordemUid),
                 Descricao: leitor.IsDBNull(ordemDescricao) ? null : leitor.GetString(ordemDescricao),
-                DataLeitura: leitor.GetDateTime(ordemData)));
+                DataLeitura: leitor.GetDateTime(ordemData),
+                TipoCartao: leitor.IsDBNull(ordemTipo) ? null : leitor.GetString(ordemTipo),
+                DataGravacao: leitor.IsDBNull(ordemGravacao) ? null : leitor.GetDateTime(ordemGravacao)));
         }
 
         return lista;
     }
 
-    /// <summary>Exclui um código pelo Id. Devolve true quando algum registro foi removido.</summary>
+    /// <summary>
+    /// Exclui um código pelo Id. Devolve true quando algum registro foi removido.
+    /// </summary>
     public async Task<bool> ExcluirAsync(int id, CancellationToken cancelamento = default)
     {
         await using var conexao = new MySqlConnection(_cadeiaBanco);
@@ -149,5 +201,25 @@ public sealed class CodigoRepository
         cmd.Parameters.AddWithValue("@id", id);
 
         return await cmd.ExecuteNonQueryAsync(cancelamento) > 0;
+    }
+
+    /// <summary>Registra a gravação do código na memória do cartão RFID.</summary>
+    public async Task MarcarGravacaoAsync(
+        int id, string tipoCartao, CancellationToken cancelamento = default)
+    {
+        await using var conexao = new MySqlConnection(_cadeiaBanco);
+        await conexao.OpenAsync(cancelamento);
+
+        await using var cmd = conexao.CreateCommand();
+        cmd.CommandText =
+            """
+            UPDATE `codigos`
+            SET `tipo_cartao` = @tipo, `data_gravacao` = CURRENT_TIMESTAMP
+            WHERE `id` = @id
+            """;
+        cmd.Parameters.AddWithValue("@tipo", tipoCartao);
+        cmd.Parameters.AddWithValue("@id", id);
+
+        await cmd.ExecuteNonQueryAsync(cancelamento);
     }
 }
