@@ -82,7 +82,7 @@ padrão acima. Em ambiente de demonstração os padrões locais do README valem
 ## Observações
 
 - Todos os arquivos de código, script e documentação deste repositório são
-  **UTF-8** (sem BOM) — includive os textos de interface em português. Ao
+  **UTF-8** (sem BOM) — inclusive os textos de interface em português. Ao
   editar via script, não use `Get-Content`/`Set-Content` do Windows PowerShell
   5.1 (que regravam UTF-8 como CP1252); prefira as ferramentas de edição ou o
   acesso explícito pelo .NET.
