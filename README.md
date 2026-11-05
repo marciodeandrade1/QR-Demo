@@ -12,6 +12,9 @@ dados MySQL (**DbCodigos**) e geração de um **PDF** com as leituras impressas 
 - Leitura contínua (polling) do UID do cartão MIFARE via APDU `FF CA 00 00 00`.
 - Cadastro de códigos no banco `DbCodigos`, associando código, UID, descrição e
   data da leitura.
+- **Gravação RFID**: escreve o código selecionado na memória do cartão
+  (bloco 4 em MIFARE Classic; páginas 4-7 em MIFARE Ultralight/NTAG) e confere
+  relendo; o tipo do cartão e a data da gravação são registrados no banco.
 - Lote de demonstração: gera e cadastra a faixa informada (ex.: `BR-1001` a
   `BR-1005`) e imprime cada código como **QR Code** em um arquivo PDF.
 - O banco `DbCodigos` e a tabela `codigos` são criados automaticamente no
@@ -45,7 +48,13 @@ com os códigos de exemplo `BR-1001` a `BR-1005`.
    **Cadastrar**; o código é gravado no banco `DbCodigos` junto do UID.
 4. Selecione uma linha da lista e clique em **Vincular UID** para associar o
    último cartão lido a um código já cadastrado.
-5. Em **Lote de códigos**, confirme o prefixo (`BR-`) e a faixa (`1001` a
+5. Em **Gravação RFID**, com o cartão ainda no leitor e uma linha selecionada:
+   - **Gravar código no cartão** escreve o texto do código na memória do cartão
+     (bloco 4 no MIFARE Classic; páginas 4-7 no Ultralight/NTAG) e confere
+     relendo; tipo e data ficam registrados no banco.
+   - **Ler gravação do cartão** mostra o texto gravado e seleciona o código
+     correspondente na lista.
+6. Em **Lote de códigos**, confirme o prefixo (`BR-`) e a faixa (`1001` a
    `1005`) e clique em **Gerar códigos e PDF (QR Code)**:
    os códigos são gravados no banco e o PDF com os QR Codes é aberto
    (salvo em `%USERPROFILE%\Documents\QrDemo\`).
@@ -73,7 +82,7 @@ padrão acima. Em ambiente de demonstração os padrões locais do README valem
 | Caminho                                | Conteúdo                                        |
 | -------------------------------------- | ----------------------------------------------- |
 | `src/QrDemo/MainForm.cs`               | Interface principal (WinForms)                  |
-| `src/QrDemo/Services/SmartCardReader.cs` | Acesso PC/SC nativo ao leitor ACR122U          |
+| `src/QrDemo/Services/SmartCardReader.cs` | Acesso PC/SC nativo: leitura de UID e gravação (Classic/Ultralight) |
 | `src/QrDemo/Services/CodigoRepository.cs` | Operações MySQL (DbCodigos)                  |
 | `src/QrDemo/Services/QrPdfGenerator.cs`  | PDF com QR Codes vetoriais (QRCoder + PdfSharp) |
 | `src/QrDemo/Services/Config.cs`          | Leitura/gravação do `config.json`              |

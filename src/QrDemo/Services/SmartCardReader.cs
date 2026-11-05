@@ -1,12 +1,14 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace QrDemo.Services;
 
 /// <summary>
 /// Acesso ao leitor de cartões ACR122U (Advanced Card Systems Ltd.) pelo serviço
 /// PC/SC do Windows (winscard.dll), sem dependências externas. O UID do cartão
-/// MIFARE é lido com a APDU "Get Data - UID" (FF CA 00 00 00).
+/// MIFARE é lido com a APDU "Get Data - UID" (FF CA 00 00 00); a gravação usa as
+/// APDUs de autenticação (FF 86) e escrita (FF D6) do MIFARE Classic/Ultralight.
 /// </summary>
 public sealed class SmartCardReader : IDisposable
 {
@@ -176,6 +178,219 @@ public sealed class SmartCardReader : IDisposable
         }
         return Convert.ToHexString(resposta[..^2]);
     }
+
+    // ----- gravação RFID (ACR122U / MIFARE) -----
+
+    /// <summary>
+    /// Números dos bytes de memória usados na demonstração: bloco 4 (setor 1,
+    /// MIFARE Classic, 16 bytes) ou páginas 4-7 (MIFARE Ultralight/NTAG,
+    /// 16 bytes em 4 páginas de 4). Nunca o bloco 0 (UID) nem os blocos de
+    /// chaves finais dos setores (7, 11, 15...).
+    /// </summary>
+    private const byte BlocoPaginaInicial = 4;
+    private const int TamanhoGravacao = 16;
+
+    public enum TipoCartaoEstimado
+    {
+        Classic,
+        Ultralight,
+        Desconhecido,
+    }
+
+    public sealed record ResultadoGravacao(
+        TipoCartaoEstimado Tipo,
+        string TextoGravado,
+        string TextoReleido);
+
+    /// <summary>
+    /// Detecta o tipo do cartão presente: autentica o bloco 4 do MIFARE Classic
+    /// com a chave-padrão de transporte; sem sucesso, tenta a leitura de 4
+    /// páginas do MIFARE Ultralight/NTAG (que não precisa de autenticação).
+    /// </summary>
+    public TipoCartaoEstimado DetectarTipoCartao()
+    {
+        GarantirCartaoConectado();
+
+        // Carrega a chave-padrão de transporte (FF FF FF FF FF FF) no slot 00
+        Tentar(new byte[] { 0xFF, 0x82, 0x00, 0x00, 0x06,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF });
+
+        // Autenticar o bloco 4 (setor 1) com a Chave A do slot 00
+        if (Tentar(new byte[] { 0xFF, 0x86, 0x00, 0x00, 0x05,
+            0x01, 0x00, BlocoPaginaInicial, 0x60, 0x00 }))
+        {
+            return TipoCartaoEstimado.Classic;
+        }
+
+        // Ultralight/NTAG: leitura de 4 páginas (16 bytes) de uma vez
+        if (TentarLeitura(new byte[] { 0xFF, 0xB0, 0x00, BlocoPaginaInicial, 0x10 },
+                out var dados) && dados.Length >= TamanhoGravacao)
+        {
+            return TipoCartaoEstimado.Ultralight;
+        }
+
+        return TipoCartaoEstimado.Desconhecido;
+    }
+
+    /// <summary>
+    /// Grava o texto (ASCII, até 16 bytes) no cartão presente — bloco 4 no
+    /// MIFARE Classic ou páginas 4-7 no Ultralight/NTAG — e confere relendo.
+    /// </summary>
+    public ResultadoGravacao GravarCartao(string texto)
+    {
+        GarantirCartaoConectado();
+
+        var tipo = DetectarTipoCartao();
+        if (tipo == TipoCartaoEstimado.Desconhecido)
+        {
+            throw new InvalidOperationException(
+                "Tipo de cartão não suportado para gravação "
+                + "(MIFARE Classic com chave-padrão ou MIFARE Ultralight/NTAG).");
+        }
+
+        if (Encoding.ASCII.GetBytes(texto).Length > TamanhoGravacao)
+        {
+            throw new InvalidOperationException(
+                $"O texto do cartão deve ter até {TamanhoGravacao} caracteres.");
+        }
+
+        var dados = new byte[TamanhoGravacao];
+        Encoding.ASCII.GetBytes(texto).CopyTo(dados, 0);
+
+        if (tipo == TipoCartaoEstimado.Classic)
+        {
+            // Grava o bloco 4 inteiro (16 bytes) após autenticar o setor 1
+            var autenticar = new byte[] { 0xFF, 0x86, 0x00, 0x00, 0x05,
+                0x01, 0x00, BlocoPaginaInicial, 0x60, 0x00 };
+            TransmitirOk(autenticar);
+
+            var gravar = new byte[] { 0xFF, 0xD6, 0x00, BlocoPaginaInicial, 0x10 }
+                .Concat(dados).ToArray();
+            TransmitirOk(gravar);
+        }
+        else
+        {
+            // Ultralight/NTAG: 4 páginas de 4 bytes, páginas 4 a 7,
+            // sem autenticação
+            for (var indice = 0; indice < TamanhoGravacao / 4; indice++)
+            {
+                var gravar = new byte[] { 0xFF, 0xD6, 0x00,
+                    (byte)(BlocoPaginaInicial + indice), 0x04 }
+                    .Concat(dados[(indice * 4)..((indice + 1) * 4)]).ToArray();
+                TransmitirOk(gravar);
+            }
+        }
+
+        // Conferência: lê de volta e devolve o conteúdo conferido
+        var gravadoReleido = LerMemoria(tipo);
+        return new ResultadoGravacao(tipo, texto, gravadoReleido);
+    }
+
+    /// <summary>
+    /// Lê os 16 bytes de memória do cartão presente (bloco 4 / páginas 4-7)
+    /// como texto ASCII e informa o tipo estimado do cartão.
+    /// </summary>
+    public string LerDadosGravados(out TipoCartaoEstimado tipo)
+    {
+        tipo = DetectarTipoCartao();
+        return LerMemoria(tipo);
+    }
+
+    /// <summary>Lê os 16 bytes de memória (bloco 4 / páginas 4-7) como texto ASCII.</summary>
+    private string LerMemoria(TipoCartaoEstimado tipo)
+    {
+        GarantirCartaoConectado();
+        if (tipo == TipoCartaoEstimado.Desconhecido)
+        {
+            throw new InvalidOperationException(
+                "Tipo de cartão não suportado para leitura "
+                + "(MIFARE Classic com chave-padrão ou MIFARE Ultralight/NTAG).");
+        }
+        var resposta = Transmitir(new byte[] { 0xFF, 0xB0, 0x00,
+            BlocoPaginaInicial, 0x10 });
+        VerificarResposta(resposta);
+        if (resposta.Length - 2 < TamanhoGravacao)
+        {
+            throw new InvalidOperationException(
+                "Resposta insuficiente do cartão na leitura do bloco de memória.");
+        }
+        return TextoAscii(resposta[..^2]);
+    }
+
+    // ----- auxiliares de gravação -----
+
+    private void GarantirCartaoConectado()
+    {
+        if (_handleCartao == IntPtr.Zero)
+        {
+            throw new InvalidOperationException(
+                "Nenhum cartão conectado - aproxime o cartão no leitor.");
+        }
+    }
+
+    /// <summary>Transmite a APDU e devolve true se a resposta trouxer SW 9000.</summary>
+    private bool Tentar(byte[] apdu)
+    {
+        try
+        {
+            VerificarResposta(Transmitir(apdu));
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Transmite e, se SW 9000, devolve os dados iniciais (sem SW).</summary>
+    private bool TentarLeitura(byte[] apdu, out byte[] dados)
+    {
+        dados = Array.Empty<byte>();
+        try
+        {
+            var resposta = Transmitir(apdu);
+            if (resposta[^2] == 0x90 && resposta[^1] == 0x00)
+            {
+                dados = resposta[..^2];
+                return true;
+            }
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private void TransmitirOk(byte[] apdu)
+    {
+        VerificarResposta(Transmitir(apdu));
+    }
+
+    private void VerificarResposta(byte[] resposta)
+    {
+        if (resposta.Length < 2
+            || resposta[^2] != 0x90 || resposta[^1] != 0x00)
+        {
+            var sw = resposta.Length >= 2
+                ? $"0x{resposta[^2]:X2}{resposta[^1]:X2}"
+                : "vazia";
+            throw new InvalidOperationException(
+                $"O cartão recusou o comando (status {sw}).");
+        }
+    }
+
+    private static string TextoAscii(byte[] bytes)
+    {
+        var caracteres = Encoding.ASCII
+            .GetString(bytes)
+            .Where(caractere => !char.IsControl(caractere))
+            .ToArray();
+        var texto = new string(caracteres);
+        var fim = texto.IndexOf('\0');
+        return fim >= 0 ? texto[..fim] : texto.TrimEnd();
+    }
+
 
     private byte[] Transmitir(byte[] apdu)
     {

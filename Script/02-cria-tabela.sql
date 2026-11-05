@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS `codigos` (
     `uid`          VARCHAR(32)  NULL     COMMENT 'UID do cartão RFID (ACR122U), hexadecimal',
     `descricao`    VARCHAR(200) NULL     COMMENT 'Descrição livre da associação',
     `data_leitura` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `tipo_cartao`  VARCHAR(20)  NULL     COMMENT 'Tipo do cartão gravado (Classic / Ultralight)',
+    `data_gravacao` DATETIME    NULL     COMMENT 'Data da gravação do código no cartão',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_codigos_codigo` (`codigo`),
     KEY `ix_codigos_uid` (`uid`)
